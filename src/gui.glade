@@ -16,21 +16,9 @@
           <object class="GtkPaned">
             <property name="visible">True</property>
             <property name="can_focus">True</property>
-            <property name="position">500</property>
+            <property name="position">314</property>
             <property name="position_set">True</property>
             <property name="wide_handle">True</property>
-            <child>
-              <object class="GtkLabel">
-                <property name="name">WIP</property>
-                <property name="visible">True</property>
-                <property name="can_focus">False</property>
-                <property name="label" translatable="yes">label</property>
-              </object>
-              <packing>
-                <property name="resize">False</property>
-                <property name="shrink">True</property>
-              </packing>
-            </child>
             <child>
               <object class="GtkScrolledWindow">
                 <property name="visible">True</property>
@@ -54,6 +42,17 @@
                 <property name="shrink">True</property>
               </packing>
             </child>
+            <child>
+              <object class="GtkLabel">
+                <property name="visible">True</property>
+                <property name="can_focus">False</property>
+                <property name="label" translatable="yes">radar goes here</property>
+              </object>
+              <packing>
+                <property name="resize">True</property>
+                <property name="shrink">True</property>
+              </packing>
+            </child>
           </object>
           <packing>
             <property name="expand">True</property>
@@ -62,7 +61,7 @@
           </packing>
         </child>
         <child>
-          <object class="GtkEntry" id="command">
+          <object class="GtkEntry" id="cmdline">
             <property name="visible">True</property>
             <property name="can_focus">True</property>
             <property name="primary_icon_stock">gtk-network</property>
