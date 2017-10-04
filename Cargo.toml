@@ -1,0 +1,12 @@
+[package]
+name = "buran"
+version = "0.1.0"
+authors = ["vurpo <max@sandholm.org>"]
+
+[dependencies]
+gdk = "*"
+glib = "*"
+
+[dependencies.gtk]
+version = "0.2.0"
+features = ["v3_10"]
