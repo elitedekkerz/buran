@@ -1,7 +1,9 @@
+#[macro_use] extern crate lazy_static;
 extern crate gtk;
 extern crate gdk;
 extern crate glib;
 extern crate crossbeam;
+extern crate regex;
 
 use std::sync::mpsc;
 use std::thread;
@@ -16,11 +18,9 @@ use gtk::{
 mod client;
 
 pub enum UiMessage {
-    LogLine(String),
     Log(String),
     ConnectionFailed,
     Connected(String),
-    ClearCommandLine,
 }
 
 fn main() {
@@ -52,6 +52,7 @@ fn main() {
         let client_tx_ = client_tx.clone();
         cmdline.connect_activate(move |this| {
             client_tx_.send(client::ClientMessage::Command(this.get_buffer().get_text())).unwrap();
+            this.get_buffer().set_text("");
         });
     }
 
@@ -74,20 +75,11 @@ fn receive() -> glib::Continue {
             if let Ok(message) = ui_rx.try_recv() {
                 {
                     match message {
-                        UiMessage::LogLine(text) => {
-                            let buf = view.get_buffer().unwrap();
-                            buf.insert(&mut buf.get_end_iter(), &format!("{}\n",text));
-                            view.scroll_mark_onscreen(
-                                &mut view.get_buffer().unwrap().get_mark("end").unwrap());
-                        },
                         UiMessage::Log(text) => {
                             let buf = view.get_buffer().unwrap();
                             buf.insert(&mut buf.get_end_iter(), &text);
                             view.scroll_mark_onscreen(
                                 &mut view.get_buffer().unwrap().get_mark("end").unwrap());
-                        },
-                        UiMessage::ClearCommandLine => {
-                            cmdline.get_buffer().set_text("");
                         },
                         _ => ()
                     }
