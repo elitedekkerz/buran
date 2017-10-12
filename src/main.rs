@@ -2,7 +2,7 @@
 extern crate gtk;
 extern crate gdk;
 extern crate glib;
-extern crate crossbeam;
+//extern crate crossbeam;
 extern crate regex;
 
 use std::sync::mpsc;
@@ -16,6 +16,7 @@ use gtk::{
 };
 
 mod client;
+mod servercomms;
 
 pub enum UiMessage {
     Log(String),
@@ -51,7 +52,7 @@ fn main() {
     {
         let client_tx_ = client_tx.clone();
         cmdline.connect_activate(move |this| {
-            client_tx_.send(client::ClientMessage::Command(this.get_buffer().get_text())).unwrap();
+            client_tx_.send(client::GuiClientMessage::Command(this.get_buffer().get_text())).unwrap();
             this.get_buffer().set_text("");
         });
     }
@@ -61,8 +62,9 @@ fn main() {
     });
 
     thread::spawn(move|| {
-        glib::idle_add(receive);
+        glib::timeout_add(50,receive);
         client::client(client_rx, ui_tx);
+        println!("thread existed!");
     });
 
     window.show_all();
@@ -72,7 +74,7 @@ fn main() {
 fn receive() -> glib::Continue {
     GLOBAL.with(move |global| {
         if let Some((ref view, ref cmdline, ref ui_rx)) = *global.borrow() {
-            if let Ok(message) = ui_rx.try_recv() {
+            while let Ok(message) = ui_rx.try_recv() {
                 {
                     match message {
                         UiMessage::Log(text) => {
@@ -85,9 +87,11 @@ fn receive() -> glib::Continue {
                     }
                 }
             }
+            glib::Continue(true)
+        } else {
+            glib::Continue(true)
         }
-    });
-    glib::Continue(true)
+    })
 }
 
 thread_local!(

@@ -2,6 +2,7 @@ use std::net::{
     TcpStream,
     Shutdown,
 };
+use std::io::Write;
 use std::ops::Deref;
 use std::net::SocketAddr;
 use std::sync::{
@@ -10,32 +11,37 @@ use std::sync::{
 };
 use std::thread;
 use std::time::Duration;
-use std::io::{
-    BufRead,
-    BufReader,
-    Write,
-    BufWriter,
-};
 
-use crossbeam;
 use regex::{
     Regex,
     Captures,
 };
 
 use UiMessage;
+use servercomms::*;
 
-pub enum ClientMessage {
+pub enum GuiClientMessage {
     Command(String),
 }
 
-enum ClientCommand {
+enum ClientCommsCommand {
     Connect(String),
     Disconnect,
     RawCommand(String),
 }
 
-fn parse_command(command: String) -> Result<ClientCommand,()> {
+fn handle_gui_message(message: &GuiClientMessage) -> Result<ClientCommsCommand,UiMessage> {
+    match {
+        match message {
+            &GuiClientMessage::Command(ref text) => parse_cli_command(text)
+        }
+    } {
+        Ok(r) => Ok(r),
+        Err(()) => Err(UiMessage::Log("Invalid command!".to_owned())),
+    }
+}
+
+fn parse_cli_command(command: &str) -> Result<ClientCommsCommand,()> {
     lazy_static!{
         static ref connect_regex: Regex =       Regex::new("^connect (.+)").unwrap();
         static ref disconnect_regex: Regex =    Regex::new("^disconnect").unwrap();
@@ -43,75 +49,88 @@ fn parse_command(command: String) -> Result<ClientCommand,()> {
     }
 
     if let Some(captures) = connect_regex.captures(&command) {
-        return Ok(ClientCommand::Connect(captures.get(1).unwrap().as_str().to_owned()));
+        return Ok(ClientCommsCommand::Connect(captures.get(1).unwrap().as_str().to_owned()));
     };
 
-    if disconnect_regex.is_match(&command) { return Ok(ClientCommand::Disconnect); };
+    if disconnect_regex.is_match(&command) { return Ok(ClientCommsCommand::Disconnect); };
 
     if let Some(captures) = rawcmd_regex.captures(&command) {
-        return Ok(ClientCommand::RawCommand(captures.get(1).unwrap().as_str().to_owned()));
+        return Ok(ClientCommsCommand::RawCommand(captures.get(1).unwrap().as_str().to_owned()));
     };
 
     Err(())
 }
 
-pub fn client(client_rx: mpsc::Receiver<ClientMessage>, ui_tx: mpsc::Sender<UiMessage>) {
-    crossbeam::scope(|scope| {
-        let mut reader_thread: Option<crossbeam::ScopedJoinHandle<()>> = None;
-        let mut stream: Option<TcpStream> = None;
+fn handle_server_response(response: &ServerResponse) -> UiMessage {
+    use self::ServerResponse::*;
+    use std::result::Result::Ok;
 
-        loop {
-            if let Ok(message) = client_rx.recv() { match message {
-                ClientMessage::Command(text) => {
-                    if let Ok(cmd) = parse_command(text) { match cmd {
-                        ClientCommand::Connect(addr) => {
-                            stream = Some(TcpStream::connect(addr).unwrap());
-                            if let Some(ref mut stream) = stream {
-                                stream.write(&['\n' as u8]);
-                                stream.flush();
-                                let stream_ = stream.try_clone().unwrap();
-                                let ui_tx_ = ui_tx.clone();
-                                reader_thread = Some(scope.spawn(move|| {
-                                    let mut reader = BufReader::new(&stream_);
-                                    let mut line = String::new();
-                                    loop {
-                                        let result = reader.read_line(&mut line).unwrap();
-                                        if result == 0 { break; }
-                                        ui_tx_.send(UiMessage::Log(format!("recv< {}", line))).unwrap();
-                                        line.clear();
-                                    }
-                                }));
-                            }
+    match response {
+        &Error(ref text) => UiMessage::Log(format!("Error: {}", text)),
+        &ServerResponse::Ok => UiMessage::Log("ok".to_owned()),
+
+        &GeneratorGet(factor,output) => UiMessage::Log(format!(
+                        "Generator is set to {}% and power output is {} kW.",
+                        factor*100.0,
+                        output
+                )),
+
+        &RawResponse(ref text) => UiMessage::Log(format!("Raw command response:\n{}", text)),
+
+        _ => UiMessage::Log(format!("Unimplemented server response {:?}!", response))
+    }
+}
+
+pub fn client(client_rx: mpsc::Receiver<GuiClientMessage>, ui_tx: mpsc::Sender<UiMessage>) {
+    let mut servercomm: Option<Box<ServerCommunicator>> = None; 
+    let mut disconnect = false;
+
+    loop {
+        if let Ok(message) = client_rx.recv() {
+            if let Some(ref mut servercomm) = servercomm { //If connected to server
+                ui_tx.send(match handle_gui_message(&message) {
+                    Err(e) => e,
+                    Ok(c) => handle_server_response(&match c {
+                        ClientCommsCommand::Connect(_) => {
+                            ServerResponse::Error("Already connected to server!".to_owned())
                         },
-                        ClientCommand::Disconnect => {
-                            if let Some(ref stream) = stream {
-                                if let Ok(_) = stream.shutdown(Shutdown::Both) {
-                                    ui_tx.send(UiMessage::Log("Disconnected from server\n".to_owned())).unwrap();
-                                    if let Some(thread) = reader_thread {
-                                        thread.join();
-                                        reader_thread = None;
-                                    }
-                                } else {
-                                    ui_tx.send(UiMessage::Log("Could not disconnect from server!\n".to_owned())).unwrap();
-                                }
+                        ClientCommsCommand::Disconnect => {
+                            let mut ret;
+                            if let Ok(_) = servercomm.disconnect() {
+                                ret = ServerResponse::Ok
                             } else {
-                                ui_tx.send(UiMessage::Log("Not connected to server!\n".to_owned())).unwrap();
+                                ret = ServerResponse::Error("Could not disconnect from server!\nConnection closed.".to_owned())
                             }
-                            stream = None;
+                            disconnect = true;
+                            ret
                         },
-                        ClientCommand::RawCommand(text) => {
-                            if let Some(ref mut stream) = stream {
-                                stream.write(format!("{}\necho a\n",text).as_bytes()).unwrap();
-                                stream.flush();
-                                ui_tx.send(UiMessage::Log(format!("send> {}\n", text))).unwrap();
-                            }
-                        }
-                    }} else {
-                        ui_tx.send(UiMessage::Log("Unrecognized command!\n".to_owned())).unwrap();
-                    }
-                },
-                _ => ()
-            }}
+                        ClientCommsCommand::RawCommand(text) => {
+                            servercomm.server_command(&ServerCommand::RawCommand(&text))
+                        },
+                        _ => ServerResponse::Error("Not implemented".to_owned())
+                    })
+                });
+            } else { //If not connected to server
+                ui_tx.send(match handle_gui_message(&message) {
+                    Err(e) => e,
+                    Ok(c) => handle_server_response(&match c {
+                        ClientCommsCommand::Connect(addr) => {
+                            let mut stream = TcpStream::connect(addr).unwrap();
+                            stream.set_nonblocking(true).unwrap();
+                            stream.write(&['\n' as u8]).unwrap();
+
+                            servercomm = Some(Box::new(CmdlineCommunicator {
+                                tcpstream: stream,
+                            }));
+                            ServerResponse::Ok
+                        },
+                        _ => ServerResponse::Error("Not connected to server!".to_owned()),
+                    })
+                });
+            }
+}
+        if disconnect {
+            servercomm = None;
         }
-    });
+    }
 }
