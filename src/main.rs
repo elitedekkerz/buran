@@ -2,7 +2,6 @@
 extern crate gtk;
 extern crate gdk;
 extern crate glib;
-//extern crate crossbeam;
 extern crate regex;
 
 use std::sync::mpsc;
@@ -17,9 +16,11 @@ use gtk::{
 
 mod client;
 mod servercomms;
+mod regexes;
 
 pub enum UiMessage {
     Log(String),
+    LogLn(String),
     ConnectionFailed,
     Connected(String),
 }

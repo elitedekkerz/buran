@@ -19,6 +19,7 @@ use regex::{
 
 use UiMessage;
 use servercomms::*;
+use regexes;
 
 pub enum GuiClientMessage {
     Command(String),
@@ -41,24 +42,27 @@ fn handle_gui_message(message: &GuiClientMessage) -> Result<ClientCommsCommand,U
     }
 }
 
-fn parse_cli_command(command: &str) -> Result<ClientCommsCommand,()> {
-    lazy_static!{
-        static ref connect_regex: Regex =       Regex::new("^connect (.+)").unwrap();
-        static ref disconnect_regex: Regex =    Regex::new("^disconnect").unwrap();
-        static ref rawcmd_regex: Regex =        Regex::new("^r (.+)").unwrap();
-    }
-
-    if let Some(captures) = connect_regex.captures(&command) {
+fn parse_cli_command(command: &str) -> Result<ClientCommsCommand,UiMessage> {
+    if let Some(captures) = regexes::connect.captures(&command) {
         return Ok(ClientCommsCommand::Connect(captures.get(1).unwrap().as_str().to_owned()));
     };
 
-    if disconnect_regex.is_match(&command) { return Ok(ClientCommsCommand::Disconnect); };
+    if regexes::disconnect.is_match(&command) { return Ok(ClientCommsCommand::Disconnect); };
 
-    if let Some(captures) = rawcmd_regex.captures(&command) {
+    if let Some(captures) = regexes::rawcmd.captures(&command) {
         return Ok(ClientCommsCommand::RawCommand(captures.get(1).unwrap().as_str().to_owned()));
     };
 
-    Err(())
+    if let Some(captures) = regexes::radio.captures(&command) {
+        let arg = captures.get(1).unwrap().as_str();
+        if regexes::on.is_match(arg) {
+            return Ok(ClientCommsCommand::RadioOn(true));
+        } else if regexes::off.is_match(arg) {
+            return Ok(ClientCommsCommand::RadioOn(false));
+        } else if let Some(captures) = regexes::set.captures(arg) {
+            let arg
+
+    Err(UiMessage::LogLn("Unrecognized command!"))
 }
 
 fn handle_server_response(response: &ServerResponse) -> UiMessage {
@@ -66,18 +70,18 @@ fn handle_server_response(response: &ServerResponse) -> UiMessage {
     use std::result::Result::Ok;
 
     match response {
-        &Error(ref text) => UiMessage::Log(format!("Error: {}", text)),
-        &ServerResponse::Ok => UiMessage::Log("ok".to_owned()),
+        &Error(ref text) => UiMessage::LogLn(format!("Error: {}", text)),
+        &ServerResponse::Ok => UiMessage::LogLn("ok"),
 
-        &GeneratorGet(factor,output) => UiMessage::Log(format!(
+        &GeneratorGet(factor,output) => UiMessage::LogLn(format!(
                         "Generator is set to {}% and power output is {} kW.",
                         factor*100.0,
                         output
                 )),
 
-        &RawResponse(ref text) => UiMessage::Log(format!("Raw command response:\n{}", text)),
+        &RawResponse(ref text) => UiMessage::LogLn(format!("raw response: \n{}", text)),
 
-        _ => UiMessage::Log(format!("Unimplemented server response {:?}!", response))
+        _ => UiMessage::LogLn(format!("Unimplemented server response {:?}!", response))
     }
 }
 
@@ -115,14 +119,16 @@ pub fn client(client_rx: mpsc::Receiver<GuiClientMessage>, ui_tx: mpsc::Sender<U
                     Err(e) => e,
                     Ok(c) => handle_server_response(&match c {
                         ClientCommsCommand::Connect(addr) => {
-                            let mut stream = TcpStream::connect(addr).unwrap();
-                            stream.set_nonblocking(true).unwrap();
-                            stream.write(&['\n' as u8]).unwrap();
-
-                            servercomm = Some(Box::new(CmdlineCommunicator {
-                                tcpstream: stream,
-                            }));
-                            ServerResponse::Ok
+                            let mut stream = TcpStream::connect(addr);
+                            if let Ok(mut stream) = stream {
+                                stream.set_nonblocking(true).unwrap();
+                                servercomm = Some(Box::new(CmdlineCommunicator {
+                                    tcpstream: stream,
+                                }));
+                                ServerResponse::Ok
+                            } else {
+                                ServerResponse::Error("Unable to connect to server!".to_owned())
+                            }
                         },
                         _ => ServerResponse::Error("Not connected to server!".to_owned()),
                     })

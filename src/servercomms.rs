@@ -111,7 +111,7 @@ impl ServerCommunicator for CmdlineCommunicator {
 
         };
 
-        let command: String = match cmd {
+        let mut command: String = match cmd {
             &ServerCommand::RawCommand(text) => {
                 String::from(text)
             },
@@ -120,6 +120,7 @@ impl ServerCommunicator for CmdlineCommunicator {
                 String::new()
             }
         };
+        command.push('\n');
         self.tcpstream.write(&command.as_bytes()).unwrap();
         self.tcpstream.flush().unwrap();
         
@@ -128,16 +129,15 @@ impl ServerCommunicator for CmdlineCommunicator {
 
         while !response_vec.ends_with(prompt.as_bytes()) {
             let mut buf = [0u8];
-            if let Ok(1) = self.tcpstream.read(&mut buf) {
+            let read = self.tcpstream.read(&mut buf);
+            if let Ok(1) = read {
                 response_vec.push(buf[0]);
             }
-            ::std::io::stdout().write(&buf);
-            println!("");
-        };
+        }
+
         let mut response = String::from_utf8(response_vec).expect("Server response not valid UTF-8!");
         let response_length = response.len()-prompt.len();
         response.truncate(response_length);
-        println!("{}", response);
 
         //TODO: not implemented yet in server side
         //if error_regex.is_match(response) { return ServerResponse::Error(format!("{:?} command error", self.last_command)); }
